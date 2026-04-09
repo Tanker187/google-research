@@ -27,6 +27,7 @@ from absl import logging
 from etils import epath
 import ml_collections
 import torch
+from torch.utils import tensorboard
 import transformers
 
 from Uboreshaji_Modeli.common import config
@@ -148,6 +149,19 @@ def main(argv):
     train_dataset = train_split.with_transform(transform_fn)
     eval_dataset = eval_split.with_transform(eval_transform_fn)
 
+    test_split = None
+    test_split_name = cfg.dataset.get("test_split", "test")
+    if test_split_name in dataset_root:
+      logging.info("Preparing test split: %s", test_split_name)
+      test_split = dataset_root[test_split_name]
+      test_dataset = test_split.with_transform(eval_transform_fn)
+    else:
+      logging.warning(
+          "Test split '%s' not found. Falling back to validation.",
+          test_split_name,
+      )
+      test_dataset = eval_dataset
+
   else:
     raise ValueError(
         f"Unsupported dataset type: {type(train_split)}. Expected a HuggingFace"
@@ -219,12 +233,15 @@ def main(argv):
   )
 
   start_time = time.monotonic()
-  logging.info("Starting training...")
-  custom_trainer.train(resume_from_checkpoint=False)
+  if not cfg.eval.get("run_eval_only", False):
+    logging.info("Starting training...")
+    custom_trainer.train(resume_from_checkpoint=False)
 
+  else:
+    logging.info("Skipping training as run_eval_only is set to True.")
 
   logging.info("Running final evaluation...")
-  eval_results = custom_trainer.evaluate()
+  eval_results = custom_trainer.evaluate(eval_dataset=test_dataset)
   logging.info("Final eval results: %s", eval_results)
 
   train_loss = None
@@ -253,6 +270,7 @@ def main(argv):
 
   cfg.eval.eval_json = str(eval_json_path)
   config_save_path.write_text(json.dumps(cfg.to_dict(), indent=2, default=str))
+
 
 if __name__ == "__main__":
   flags.mark_flags_as_mutual_exclusive(["config", "config_json"], required=True)

@@ -26,6 +26,7 @@ from torch import nn
 import transformers
 
 from Uboreshaji_Modeli.common import augmentations
+from Uboreshaji_Modeli.common import box_utils
 from Uboreshaji_Modeli.common import config as base_config
 from Uboreshaji_Modeli.common import losses
 from Uboreshaji_Modeli.common import matcher
@@ -43,8 +44,8 @@ def normalize_annotation_for_owlv2(
   the model's square canvas padding.
 
   Args:
-    boxes: A torch.Tensor of shape (N, 4) or (4,) with bounding boxes in
-      [xmin, ymin, width, height] pixel format.
+    boxes: A torch.Tensor of shape (N, 4) or (4,) with bounding boxes in [xmin,
+      ymin, width, height] pixel format.
     original_size: A tuple (height, width) of the original image.
 
   Returns:
@@ -128,8 +129,9 @@ class Owlv2Engine(base.ModelEngine):
         for category_id, bbox in zip(objects["category"], objects["bbox"]):
           category_name = dataset_id2label[category_id]
           if category_name in model_label2id:
-            new_labels.append(model_label2id[category_name])
-            new_bboxes.append(bbox)
+            if box_utils.is_valid_box(bbox, box_format="xywh"):
+              new_labels.append(model_label2id[category_name])
+              new_bboxes.append(bbox)
 
         if aug:
           image, new_bboxes, new_labels_aug = augmentations.apply_augmentation(
@@ -145,7 +147,9 @@ class Owlv2Engine(base.ModelEngine):
         owl_dict = processor(
             text=text_inputs,
             images=image,
-            return_tensors="pt"
+            padding="max_length",
+            truncation=True,
+            return_tensors="pt",
         )
 
         if not new_labels:
@@ -253,3 +257,45 @@ class Owlv2Engine(base.ModelEngine):
     ).to(device)
 
     return criterion, weight_dict
+
+  @property
+  def inference_kwargs(self):
+    """Returns model-specific inference keyword arguments."""
+    return {"interpolate_pos_encoding": True}
+
+  def post_process(
+      self,
+      processor,
+      outputs,
+      target_sizes,
+      score_threshold,
+  ):
+    """Post-processes raw model outputs into standardised detections."""
+    batch_logits = outputs.logits
+    batch_boxes = outputs.pred_boxes
+    probs = batch_logits.sigmoid()
+    batch_scores, batch_labels = torch.max(probs, dim=-1)
+
+    batch_boxes = box_utils.box_cxcywh_to_xyxy(batch_boxes)
+
+    results = []
+    for i, (scores, labels, boxes) in enumerate(
+        zip(batch_scores, batch_labels, batch_boxes)
+    ):
+      if target_sizes is not None:
+        h, w = target_sizes[i].tolist()
+        max_size = float(max(h, w))
+        scale_fct = torch.tensor(
+            [max_size, max_size, max_size, max_size], device=boxes.device
+        )
+        boxes = boxes * scale_fct
+        # Clamp to remove white square padding and keep boxes inside image.
+        boxes[:, 0::2] = boxes[:, 0::2].clamp(0, w)
+        boxes[:, 1::2] = boxes[:, 1::2].clamp(0, h)
+
+      mask = scores > score_threshold
+      results.append(
+          {"scores": scores[mask], "labels": labels[mask], "boxes": boxes[mask]}
+      )
+
+    return results

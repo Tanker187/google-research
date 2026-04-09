@@ -2,7 +2,7 @@
 
 ## What is This Project?
 
-**Uboreshaji Modeli** Kiswahili for "model fine-tuning") is a modular,
+**Uboreshaji Modeli** Kiswahili for ("model fine-tuning") is a modular,
 production-ready framework from Google Research for fine-tuning object
 detection models like OWL-v2. It's built to be extensible across different
 models while maintaining clean separation of concerns and configuration-driven
@@ -91,6 +91,21 @@ python3 -m Uboreshaji_Modeli.main \
   --dataset_path="/path/to/your/huggingface_dataset" \
   --output_dir="/tmp/outputs"
 ```
+
+**Evaluation-Only Example:**
+
+To run evaluation on a saved checkpoint without training, update your config
+file to set `config.eval.run_eval_only = True` and then run:
+
+```bash
+python3 -m Uboreshaji_Modeli.main \
+    --config=Uboreshaji_Modeli/common/config.py \
+    --model_id="/path/to/your/saved/checkpoint" \
+    --output_dir="/tmp/evaluation_outputs"
+```
+
+*Note: Evaluation defaults to the `"test"` split if it exists, falling back to
+validation if unavailable.*
 
 ## 💻 For New Users: Engagement Path
 
